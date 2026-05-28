@@ -12,55 +12,8 @@ PASSWORD = os.getenv("NEO4J_PASSWORD")
 DATABASE = os.getenv("NEO4J_DATABASE", "neo4j")
 
 OPPOSITE = {"NORTE": "SUR", "SUR": "NORTE", "ESTE": "OESTE", "OESTE": "ESTE"}
-
-
-# ── Lógica de grilla ──────────────────────────────────────────────────────
-
-def pieza_tipo(fila, col, filas, cols):
-    bordes = sum([fila == 0, fila == filas - 1, col == 0, col == cols - 1])
-    if bordes >= 2:
-        return "Esquina"
-    if bordes == 1:
-        return "Borde"
-    return "Interior"
-
-
-def pieza_id(tipo, fila, col):
-    return f"{tipo[0]}_{fila}_{col}"      # E_0_0 / B_0_1 / I_1_1
-
-
-def build_grid(filas, cols):
-    grid = {}
-    for f in range(filas):
-        for c in range(cols):
-            tipo = pieza_tipo(f, c, filas, cols)
-            grid[(f, c)] = {
-                "pieza_id": pieza_id(tipo, f, c),
-                "tipo": tipo,
-                "fila": f,
-                "columna": c,
-                "activa": True,
-            }
-    return grid
-
-
-def ascii_grid(grid, filas, cols):
-    ICONS = {"Esquina": "ESQ", "Borde": "BRD", "Interior": "INT"}
-    lines = []
-    header = "     " + "  ".join(f"c{c:<2}" for c in range(cols))
-    lines.append(header)
-    for f in range(filas):
-        row = f"f{f:<2} ["
-        cells = []
-        for c in range(cols):
-            p = grid[(f, c)]
-            icon = ICONS[p["tipo"]]
-            marker = "!" if not p["activa"] else " "
-            cells.append(f"{marker}{icon}")
-        row += " | ".join(cells) + " ]"
-        lines.append(row)
-    lines.append("  ( ! = faltante )")
-    return "\n".join(lines)
+TIPOS    = {"e": "Esquina", "b": "Borde", "i": "Interior"}
+DIRS     = {"NORTE", "SUR", "ESTE", "OESTE"}
 
 
 # ── Entrada del usuario ───────────────────────────────────────────────────
@@ -84,17 +37,92 @@ def ask_str(prompt, default=""):
     return val if val else default
 
 
-def ask_dimensions():
+def ask_int_positivo(prompt, minimo=1):
     while True:
-        raw = input("Dimensiones (FilasxColumnas, ej. 3x3): ").strip().lower()
+        raw = input(f"{prompt}: ").strip()
         try:
-            f, c = raw.split("x")
-            filas, cols = int(f), int(c)
-            if filas >= 2 and cols >= 2:
-                return filas, cols
-            print("  Mínimo 2x2.")
-        except (ValueError, AttributeError):
-            print("  Formato inválido. Usa 'FilasxColumnas' (ej. 3x3, 20x20).")
+            val = int(raw)
+            if val >= minimo:
+                return val
+            print(f"  Debe ser al menos {minimo}.")
+        except ValueError:
+            print("  Ingresa un número entero válido.")
+
+
+def ask_tipo_pieza():
+    while True:
+        raw = input("  Tipo [E=Esquina / B=Borde / I=Interior]: ").strip().lower()
+        if raw in TIPOS:
+            return TIPOS[raw]
+        print("  Responde 'E', 'B' o 'I'.")
+
+
+def ask_direccion(from_id, to_id):
+    while True:
+        raw = input(f"    Dirección desde {from_id} hacia {to_id} [NORTE/SUR/ESTE/OESTE]: ").strip().upper()
+        if raw in DIRS:
+            return raw
+        print("  Dirección inválida. Usa NORTE, SUR, ESTE u OESTE.")
+
+
+def ask_destino(n_total, n_actual):
+    while True:
+        raw = input(f"    Número de pieza destino (1-{n_total}, distinta de {n_actual}): ").strip()
+        try:
+            dest = int(raw)
+            if dest == n_actual:
+                print("  Una pieza no puede conectar consigo misma.")
+            elif 1 <= dest <= n_total:
+                return dest
+            else:
+                print(f"  Debe ser entre 1 y {n_total}.")
+        except ValueError:
+            print("  Ingresa un número entero.")
+
+
+# ── Recolección de piezas y conexiones ───────────────────────────────────
+
+def recopilar_piezas(total):
+    """
+    Recolecta datos de cada pieza y sus conexiones.
+    Retorna (piezas_dict, conexiones_list).
+      piezas_dict  : {n: {pieza_id, tipo, descripcion, activa}}
+      conexiones_list: [(pid_a, pid_b, dir_ab), ...]  — ya deduplicadas
+    """
+    piezas      = {}
+    conexiones  = []
+    pares_vistos = set()  # frozenset({n_a, n_b}) — evita duplicar aristas
+
+    for n in range(1, total + 1):
+        print(f"\n--- Pieza {n} de {total} ---")
+        tipo    = ask_tipo_pieza()
+        desc    = ask_str("  Descripción (opcional)", default="")
+        activa  = ask_yes_no("  ¿Activa?", default_yes=True)
+        pid     = f"P_{n}"
+        piezas[n] = {"pieza_id": pid, "tipo": tipo, "descripcion": desc, "activa": activa}
+
+        if total == 1:
+            continue  # con una sola pieza no puede haber conexiones
+
+        print(f"\n  Conexiones de Pieza {n} ({pid}):")
+        while ask_yes_no("  ¿Conecta con otra pieza?", default_yes=False):
+            destino = ask_destino(total, n)
+            par     = frozenset({n, destino})
+
+            if par in pares_vistos:
+                pid_dest = f"P_{destino}"
+                print(f"    (!) Par {pid} ↔ {pid_dest} ya registrado — se omite.")
+                continue
+
+            pid_dest = f"P_{destino}"
+            dir_ab   = ask_direccion(pid, pid_dest)
+            dir_ba   = OPPOSITE[dir_ab]
+            print(f"    ↳ auto-inversa: {pid_dest} -[{dir_ba}]-> {pid}")
+
+            conexiones.append((pid, pid_dest, dir_ab))
+            pares_vistos.add(par)
+
+    return piezas, conexiones
 
 
 # ── Operaciones Neo4j ─────────────────────────────────────────────────────
@@ -118,9 +146,6 @@ def crear_indexes(session):
     session.run(
         "CREATE INDEX pieza_activa_idx IF NOT EXISTS FOR (p:Pieza) ON (p.activa)"
     )
-    session.run(
-        "CREATE INDEX pieza_posicion_idx IF NOT EXISTS FOR (p:Pieza) ON (p.fila, p.columna)"
-    )
 
 
 def crear_puzzle(session, puzzle_id, nombre, total_piezas, dimensiones, imagen_url):
@@ -139,18 +164,16 @@ def crear_puzzle(session, puzzle_id, nombre, total_piezas, dimensiones, imagen_u
 
 
 def crear_pieza(session, p):
-    # Dynamic label (Pieza + subtipo)
     tipo = p["tipo"]
     session.run(
         f"""
         CREATE (n:Pieza:{tipo} {{
-            pieza_id: $pid,
-            fila:     $fila,
-            columna:  $col,
-            activa:   $activa
+            pieza_id:    $pid,
+            descripcion: $desc,
+            activa:      $activa
         }})
         """,
-        pid=p["pieza_id"], fila=p["fila"], col=p["columna"], activa=p["activa"],
+        pid=p["pieza_id"], desc=p["descripcion"], activa=p["activa"],
     )
 
 
@@ -166,8 +189,8 @@ def crear_conecta(session, pid_a, pid_b, dir_ab):
     )
 
 
-def crear_primer_paso(session, puzzle_id, esquina_ids):
-    for eid in esquina_ids:
+def crear_primer_paso(session, puzzle_id, inicio_ids):
+    for eid in inicio_ids:
         session.run(
             """
             MATCH (pz:Puzzle {puzzle_id: $pid}), (e:Pieza {pieza_id: $eid})
@@ -196,74 +219,62 @@ def main():
         print("Operación cancelada.")
         return
 
-    # ── Metadatos del puzzle ──
+    # ── Metadatos ──
     print("\n--- Datos del Rompecabezas ---")
-    nombre     = ask_str("Nombre del rompecabezas")
-    filas, cols = ask_dimensions()
-    auto_id    = "puzzle_" + str(uuid.uuid4())[:8]
-    puzzle_id  = ask_str("ID del puzzle", default=auto_id)
-    imagen_url = ask_str("URL de imagen (opcional)", default="")
+    nombre       = ask_str("Nombre del rompecabezas")
+    total_piezas = ask_int_positivo("Total de piezas")
+    auto_id      = "puzzle_" + str(uuid.uuid4())[:8]
+    puzzle_id    = ask_str("ID del puzzle", default=auto_id)
+    imagen_url   = ask_str("URL de imagen (opcional)", default="")
 
-    total_piezas = filas * cols
-    grid = build_grid(filas, cols)
+    # ── Captura pieza por pieza ──
+    piezas, conexiones = recopilar_piezas(total_piezas)
 
-    # Conteo por tipo
-    tipos = {"Esquina": [], "Borde": [], "Interior": []}
-    for p in grid.values():
-        tipos[p["tipo"]].append(p["pieza_id"])
-    esquinas = tipos["Esquina"]
+    # ── Calcular puntos de inicio (PRIMER_PASO) ──
+    inicio_ids = [
+        p["pieza_id"]
+        for p in piezas.values()
+        if p["tipo"] == "Esquina" and p["activa"]
+    ]
+    if not inicio_ids:
+        # Fallback: primera pieza activa en orden numérico
+        for n in sorted(piezas.keys()):
+            if piezas[n]["activa"]:
+                inicio_ids = [piezas[n]["pieza_id"]]
+                print(f"\n  Advertencia: no hay Esquinas activas. "
+                      f"Se usará {inicio_ids[0]} como punto de inicio.")
+                break
 
-    print(f"\n→ Grilla {filas}×{cols} = {total_piezas} piezas")
-    print(f"   Esquinas: {len(esquinas)}  |  Bordes: {len(tipos['Borde'])}  |  Interior: {len(tipos['Interior'])}")
-    print()
-    print(ascii_grid(grid, filas, cols))
-
-    # ── Piezas faltantes ──
-    print("\n¿Hay piezas faltantes? Ingresa los IDs separados por comas")
-    print("(ej. E_0_0, B_0_1) o presiona Enter si no hay ninguna:")
-    raw_missing = input("  Faltantes: ").strip()
-
-    if raw_missing:
-        valid_ids = {p["pieza_id"] for p in grid.values()}
-        missing_ids = {pid.strip() for pid in raw_missing.split(",")}
-        invalid = missing_ids - valid_ids
-        if invalid:
-            print(f"  Advertencia — IDs no reconocidos: {', '.join(sorted(invalid))}")
-        for p in grid.values():
-            if p["pieza_id"] in missing_ids:
-                p["activa"] = False
-
-    activas   = sum(1 for p in grid.values() if p["activa"])
+    activas   = sum(1 for p in piezas.values() if p["activa"])
     faltantes = total_piezas - activas
-
-    # Relaciones a crear: derecha (ESTE) y abajo (SUR) por cada celda
-    n_pares = sum(
-        (1 if c + 1 < cols else 0) + (1 if f + 1 < filas else 0)
-        for f in range(filas)
-        for c in range(cols)
-    )
 
     # ── Resumen ──
     print("\n" + "=" * 55)
     print("                   RESUMEN")
     print("=" * 55)
     print(f"  Puzzle       : {nombre} ({puzzle_id})")
-    print(f"  Dimensiones  : {filas}×{cols}  ({total_piezas} piezas)")
+    print(f"  Total piezas : {total_piezas}")
     print(f"  Activas      : {activas}/{total_piezas}")
     if faltantes:
-        faltantes_ids = [p["pieza_id"] for p in grid.values() if not p["activa"]]
-        print(f"  Faltantes    : {faltantes} → {', '.join(faltantes_ids)}")
-    print(f"  Relaciones   : {n_pares * 2} CONECTA (bidireccionales)")
-    print(f"  Inicio armado: {', '.join(esquinas)}  (PRIMER_PASO)")
-    print()
-    print(ascii_grid(grid, filas, cols))
-    print()
+        ids_faltantes = [p["pieza_id"] for p in piezas.values() if not p["activa"]]
+        print(f"  Faltantes    : {faltantes} → {', '.join(ids_faltantes)}")
+    print(f"  Relaciones   : {len(conexiones) * 2} CONECTA ({len(conexiones)} pares bidireccionales)")
+    if inicio_ids:
+        print(f"  Inicio armado: {', '.join(inicio_ids)}  (PRIMER_PASO)")
+    else:
+        print(f"  Inicio armado: ninguno (todas las piezas inactivas)")
 
+    if conexiones:
+        print("\n  Conexiones declaradas:")
+        for pid_a, pid_b, dir_ab in conexiones:
+            print(f"    {pid_a} -[{dir_ab}]-> {pid_b}  |  {pid_b} -[{OPPOSITE[dir_ab]}]-> {pid_a}")
+
+    print()
     if not ask_yes_no("¿Confirmar y cargar en Neo4j?", default_yes=False):
         print("Carga cancelada.")
         return
 
-    # ── Conexión ──
+    # ── Conexión y carga ──
     print("\nConectando a Neo4j Aura...")
     try:
         driver = GraphDatabase.driver(URI, auth=(USER, PASSWORD))
@@ -282,27 +293,27 @@ def main():
         crear_indexes(session)
 
         print(f"Creando nodo :Puzzle '{nombre}'...")
-        crear_puzzle(session, puzzle_id, nombre, total_piezas, f"{filas}x{cols}", imagen_url)
+        crear_puzzle(
+            session, puzzle_id, nombre, total_piezas,
+            f"{total_piezas} piezas asimétrico", imagen_url,
+        )
 
         print(f"Creando {total_piezas} nodos :Pieza...")
-        for p in grid.values():
+        for p in piezas.values():
             crear_pieza(session, p)
 
-        print(f"Creando {n_pares * 2} relaciones :CONECTA...")
-        for f in range(filas):
-            for c in range(cols):
-                pid = grid[(f, c)]["pieza_id"]
-                if c + 1 < cols:
-                    crear_conecta(session, pid, grid[(f, c + 1)]["pieza_id"], "ESTE")
-                if f + 1 < filas:
-                    crear_conecta(session, pid, grid[(f + 1, c)]["pieza_id"], "SUR")
+        if conexiones:
+            print(f"Creando {len(conexiones) * 2} relaciones :CONECTA...")
+            for pid_a, pid_b, dir_ab in conexiones:
+                crear_conecta(session, pid_a, pid_b, dir_ab)
 
-        print(f"Creando {len(esquinas)} relaciones :PRIMER_PASO...")
-        crear_primer_paso(session, puzzle_id, esquinas)
+        if inicio_ids:
+            print(f"Creando {len(inicio_ids)} relación(es) :PRIMER_PASO...")
+            crear_primer_paso(session, puzzle_id, inicio_ids)
 
     driver.close()
     print(f"\n✓ '{nombre}' cargado en Neo4j Aura.")
-    print(f"  {total_piezas} piezas  |  {n_pares * 2} relaciones CONECTA  |  {len(esquinas)} puntos de inicio\n")
+    print(f"  {total_piezas} piezas  |  {len(conexiones) * 2} relaciones CONECTA  |  {len(inicio_ids)} punto(s) de inicio\n")
 
 
 if __name__ == "__main__":

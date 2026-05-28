@@ -12,7 +12,6 @@ PASSWORD = os.getenv("NEO4J_PASSWORD")
 DATABASE = os.getenv("NEO4J_DATABASE", "neo4j")
 
 OPPOSITE = {"NORTE": "SUR", "SUR": "NORTE", "ESTE": "OESTE", "OESTE": "ESTE"}
-TIPOS    = {"e": "Esquina", "b": "Borde", "i": "Interior"}
 DIRS     = {"NORTE", "SUR", "ESTE", "OESTE"}
 
 
@@ -49,14 +48,6 @@ def ask_int_positivo(prompt, minimo=1):
             print("  Ingresa un número entero válido.")
 
 
-def ask_tipo_pieza():
-    while True:
-        raw = input("  Tipo [E=Esquina / B=Borde / I=Interior]: ").strip().lower()
-        if raw in TIPOS:
-            return TIPOS[raw]
-        print("  Responde 'E', 'B' o 'I'.")
-
-
 def ask_direccion(from_id, to_id):
     while True:
         raw = input(f"    Dirección desde {from_id} hacia {to_id} [NORTE/SUR/ESTE/OESTE]: ").strip().upper()
@@ -86,7 +77,7 @@ def recopilar_piezas(total):
     """
     Recolecta datos de cada pieza y sus conexiones.
     Retorna (piezas_dict, conexiones_list).
-      piezas_dict  : {n: {pieza_id, tipo, descripcion, activa}}
+      piezas_dict  : {n: {pieza_id, descripcion, activa}}
       conexiones_list: [(pid_a, pid_b, dir_ab), ...]  — ya deduplicadas
     """
     piezas      = {}
@@ -95,11 +86,10 @@ def recopilar_piezas(total):
 
     for n in range(1, total + 1):
         print(f"\n--- Pieza {n} de {total} ---")
-        tipo    = ask_tipo_pieza()
         desc    = ask_str("  Descripción (opcional)", default="")
         activa  = ask_yes_no("  ¿Activa?", default_yes=True)
         pid     = f"P_{n}"
-        piezas[n] = {"pieza_id": pid, "tipo": tipo, "descripcion": desc, "activa": activa}
+        piezas[n] = {"pieza_id": pid, "descripcion": desc, "activa": activa}
 
         if total == 1:
             continue  # con una sola pieza no puede haber conexiones
@@ -164,14 +154,13 @@ def crear_puzzle(session, puzzle_id, nombre, total_piezas, dimensiones, imagen_u
 
 
 def crear_pieza(session, p):
-    tipo = p["tipo"]
     session.run(
-        f"""
-        CREATE (n:Pieza:{tipo} {{
+        """
+        CREATE (n:Pieza {
             pieza_id:    $pid,
             descripcion: $desc,
             activa:      $activa
-        }})
+        })
         """,
         pid=p["pieza_id"], desc=p["descripcion"], activa=p["activa"],
     )
@@ -230,20 +219,32 @@ def main():
     # ── Captura pieza por pieza ──
     piezas, conexiones = recopilar_piezas(total_piezas)
 
-    # ── Calcular puntos de inicio (PRIMER_PASO) ──
-    inicio_ids = [
-        p["pieza_id"]
-        for p in piezas.values()
-        if p["tipo"] == "Esquina" and p["activa"]
-    ]
-    if not inicio_ids:
-        # Fallback: primera pieza activa en orden numérico
-        for n in sorted(piezas.keys()):
-            if piezas[n]["activa"]:
-                inicio_ids = [piezas[n]["pieza_id"]]
-                print(f"\n  Advertencia: no hay Esquinas activas. "
-                      f"Se usará {inicio_ids[0]} como punto de inicio.")
-                break
+    # ── Elegir pieza de inicio (PRIMER_PASO) ──
+    primera_activa = next(
+        (piezas[n]["pieza_id"] for n in sorted(piezas.keys()) if piezas[n]["activa"]),
+        None,
+    )
+    inicio_ids = []
+    if primera_activa:
+        print(f"\n¿Desde qué pieza desea iniciar el armado? (1-{total_piezas}, Enter = primera activa)")
+        raw_inicio = input("  Número de pieza: ").strip()
+        if raw_inicio:
+            try:
+                n_inicio = int(raw_inicio)
+                if 1 <= n_inicio <= total_piezas:
+                    if piezas[n_inicio]["activa"]:
+                        inicio_ids = [piezas[n_inicio]["pieza_id"]]
+                    else:
+                        print(f"  La pieza {n_inicio} está inactiva. Se usará la primera activa ({primera_activa}).")
+                        inicio_ids = [primera_activa]
+                else:
+                    print(f"  Número fuera de rango. Se usará la primera activa ({primera_activa}).")
+                    inicio_ids = [primera_activa]
+            except ValueError:
+                print(f"  Entrada inválida. Se usará la primera activa ({primera_activa}).")
+                inicio_ids = [primera_activa]
+        else:
+            inicio_ids = [primera_activa]
 
     activas   = sum(1 for p in piezas.values() if p["activa"])
     faltantes = total_piezas - activas

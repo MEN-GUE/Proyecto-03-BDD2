@@ -173,7 +173,7 @@ def preguntar_piezas_faltantes(armador, puzzle_id):
         return
 
     print("Ingresa los IDs de las piezas faltantes separados por coma")
-    print("  Formato de IDs: E_fila_col (esquina), B_fila_col (borde), I_fila_col (interior)")
+    print("  Formato de IDs: P_N  (ejemplo: P_1, P_5, P_12)")
     print("  Ejemplo: E_0_0, B_0_1, I_1_1")
     raw = input("  IDs: ").strip()
     if not raw:

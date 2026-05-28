@@ -64,6 +64,20 @@ class ArmadorLogico:
         ).single()
         return r["total"] if r else 0
 
+    def marcar_faltantes(self, piezas_faltantes):
+        """Registra piezas como faltantes (activa=false) en Neo4j."""
+        marcadas, no_encontradas = [], []
+        for pieza_id in piezas_faltantes:
+            r = self.session.run(
+                "MATCH (p:Pieza {pieza_id: $pid}) SET p.activa = false RETURN p.pieza_id AS id",
+                pid=pieza_id,
+            ).single()
+            if r:
+                marcadas.append(pieza_id)
+            else:
+                no_encontradas.append(pieza_id)
+        return marcadas, no_encontradas
+
     # ── Algoritmo principal ───────────────────────────────────────────────
 
     def ensamblar(self, puzzle_id, pieza_id_inicio=None):
@@ -119,10 +133,10 @@ class ArmadorLogico:
 
                 if not activa:
                     if vid not in faltantes_vistos:
-                        print(f"  ➜ {dir_:<5}: FALTA '{vid}' — ensamblaje parcial aquí")
+                        print(f"  ➜ {dir_:<5}: [ESPACIO VACÍO] — pieza '{vid}' faltante, dejar el espacio libre")
                         faltantes_vistos.add(vid)
                     else:
-                        print(f"  ➜ {dir_:<5}: FALTA '{vid}' (ya reportada)")
+                        print(f"  ➜ {dir_:<5}: [ESPACIO VACÍO] — pieza '{vid}' faltante (ya indicada anteriormente)")
                 elif vid not in visitados:
                     print(f"  ➜ {dir_:<5}: Ensamblar '{vid}'")
                     visitados.add(vid)
@@ -150,6 +164,35 @@ class ArmadorLogico:
 
 
 # ── Entrada de usuario ────────────────────────────────────────────────────
+
+def preguntar_piezas_faltantes(armador, puzzle_id):
+    """Pregunta al usuario si hay piezas faltantes y las registra en la BD."""
+    print(f"\n¿Hay piezas faltantes en el rompecabezas '{puzzle_id}'? (s/n): ", end="")
+    resp = input().strip().lower()
+    if resp != "s":
+        return
+
+    print("Ingresa los IDs de las piezas faltantes separados por coma")
+    print("  Formato de IDs: E_fila_col (esquina), B_fila_col (borde), I_fila_col (interior)")
+    print("  Ejemplo: E_0_0, B_0_1, I_1_1")
+    raw = input("  IDs: ").strip()
+    if not raw:
+        print("  No se ingresaron piezas.")
+        return
+
+    piezas = [p.strip() for p in raw.split(",") if p.strip()]
+    if not piezas:
+        return
+
+    print("\nRegistrando piezas faltantes en la base de datos...")
+    marcadas, no_encontradas = armador.marcar_faltantes(piezas)
+    for pid in marcadas:
+        print(f"  ✓ Pieza '{pid}' registrada como faltante.")
+    for pid in no_encontradas:
+        print(f"  ✗ Pieza '{pid}' no encontrada — se omite.")
+    if marcadas:
+        print(f"\n  {len(marcadas)} pieza(s) faltante(s) registradas. El algoritmo dejará esos espacios vacíos.")
+
 
 def elegir_puzzle(puzzles):
     print("\nPuzzles disponibles:")
@@ -197,6 +240,8 @@ def main():
             return
 
         puzzle_id = elegir_puzzle(puzzles)
+
+        preguntar_piezas_faltantes(armador, puzzle_id)
 
         print(f"\n¿Desde qué pieza iniciar? (Enter para usar esquina por defecto)")
         raw = input("  ID de pieza: ").strip()
